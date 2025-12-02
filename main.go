@@ -5,11 +5,36 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strikelogic/calculator"
+	"strikelogic/news_engine"
+	"strikelogic/newsfeed"
+	"strikelogic/storage"
 	"strikelogic/strategist"
+	"time"
+
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found")
+	}
+
+	storage.InitDB()
+
+	// Background news fetcher
+	go func() {
+		tickers := []string{"TSLA", "NVDA", "SPY"}
+		for {
+			for _, ticker := range tickers {
+				log.Printf("Fetching news for %s...", ticker)
+				newsfeed.FetchStockNews(ticker)
+			}
+			time.Sleep(15 * time.Minute)
+		}
+	}()
+
 	http.HandleFunc("/chain", func(w http.ResponseWriter, r *http.Request) {
 		// Enable CORS for frontend development convenience
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -88,6 +113,56 @@ func main() {
 		}
 
 		json.NewEncoder(w).Encode(map[string]float64{"price": price})
+	})
+
+	http.HandleFunc("/api/news/signals", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Content-Type", "application/json")
+
+		headlines, err := news_engine.FetchHeadlines()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		var signals []news_engine.Signal
+		for _, headline := range headlines {
+			signal, err := news_engine.AnalyzeSentiment(headline)
+			if err != nil {
+				log.Printf("Error analyzing sentiment for '%s': %v", headline, err)
+				continue
+			}
+			signals = append(signals, signal)
+		}
+
+		json.NewEncoder(w).Encode(signals)
+	})
+
+	http.HandleFunc("/api/news", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Content-Type", "application/json")
+
+		ticker := r.URL.Query().Get("ticker")
+		if ticker == "" {
+			http.Error(w, "Ticker required", http.StatusBadRequest)
+			return
+		}
+
+		limitStr := r.URL.Query().Get("limit")
+		limit := 20
+		if limitStr != "" {
+			if l, err := strconv.Atoi(limitStr); err == nil {
+				limit = l
+			}
+		}
+
+		articles, err := storage.GetLatestNews(ticker, limit)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		json.NewEncoder(w).Encode(articles)
 	})
 
 	fmt.Println("Server starting on :8081...")
