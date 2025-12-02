@@ -27,6 +27,29 @@ type Trade struct {
 	NetDebit    float64     `json:"netDebit"`
 	MaxProfit   string      `json:"maxProfit"` // String for flexibility (e.g. "Unlimited")
 	ROI         string      `json:"roi"`       // Estimated ROI
+	DegenScore  float64     `json:"degenScore"`
+	PoP         string      `json:"pop"` // Probability of Profit
+}
+
+// CalculateDegenScore calculates the leverage intensity (1-10)
+func CalculateDegenScore(contract calculator.OptionContract, stockPrice float64) float64 {
+	if contract.Ask == 0 {
+		return 0
+	}
+	// Leverage = (Delta * StockPrice) / OptionPrice
+	leverage := (math.Abs(contract.Delta) * stockPrice) / contract.Ask
+
+	// Normalize: < 5x -> 1, > 50x -> 10
+	// Linear mapping: Score = 1 + (Leverage - 5) * (9 / 45)
+	score := 1.0 + (leverage-5.0)*0.2
+
+	if score < 1 {
+		score = 1
+	}
+	if score > 10 {
+		score = 10
+	}
+	return math.Round(score*10) / 10
 }
 
 // FindTrades generates 3 distinct trade ideas
@@ -50,6 +73,13 @@ func FindTrades(ticker string, currentPrice, targetPrice float64, targetDateStr 
 
 	if longLeg != nil && shortLeg != nil {
 		netDebit := longLeg.Ask - shortLeg.Bid
+		// Approx BreakEven for PMCC: Long Strike + Net Debit
+		breakEven := longLeg.Strike + netDebit
+		// Use Long Leg expiry for PoP time horizon? Or Short? Usually the trade is managed short term.
+		// Let's use the Short Leg expiry for "Probability of Profit on this campaign"
+		daysOut := 30.0
+		pop := calculator.CalculatePoP(breakEven, currentPrice, daysOut/365.0, longLeg.Vol)
+
 		trades = append(trades, Trade{
 			RiskProfile: Low,
 			Description: "Poor Man's Covered Call (PMCC). Buy deep ITM LEAPS and sell monthly calls against it for income.",
@@ -57,9 +87,11 @@ func FindTrades(ticker string, currentPrice, targetPrice float64, targetDateStr 
 				{Action: "Buy", Option: *longLeg},
 				{Action: "Sell", Option: *shortLeg},
 			},
-			NetDebit:  math.Round(netDebit*100) / 100,
-			MaxProfit: "Variable (Income Generation)",
-			ROI:       "~15-25% annualized",
+			NetDebit:   math.Round(netDebit*100) / 100,
+			MaxProfit:  "Variable (Income Generation)",
+			ROI:        "~15-25% annualized",
+			DegenScore: CalculateDegenScore(*longLeg, currentPrice),
+			PoP:        fmt.Sprintf("%.1f%%", pop*100),
 		})
 	}
 
@@ -74,6 +106,10 @@ func FindTrades(ticker string, currentPrice, targetPrice float64, targetDateStr 
 
 	if longLegMed != nil && shortLegMed != nil {
 		netDebit := longLegMed.Ask - shortLegMed.Bid
+		breakEven := longLegMed.Strike + netDebit
+		daysOut := 14.0
+		pop := calculator.CalculatePoP(breakEven, currentPrice, daysOut/365.0, longLegMed.Vol)
+
 		trades = append(trades, Trade{
 			RiskProfile: Medium,
 			Description: "Aggressive PMCC. Higher delta short call for more premium, but capped upside.",
@@ -81,9 +117,11 @@ func FindTrades(ticker string, currentPrice, targetPrice float64, targetDateStr 
 				{Action: "Buy", Option: *longLegMed},
 				{Action: "Sell", Option: *shortLegMed},
 			},
-			NetDebit:  math.Round(netDebit*100) / 100,
-			MaxProfit: "Capped at Short Strike",
-			ROI:       "~30-50% annualized",
+			NetDebit:   math.Round(netDebit*100) / 100,
+			MaxProfit:  "Capped at Short Strike",
+			ROI:        "~30-50% annualized",
+			DegenScore: CalculateDegenScore(*longLegMed, currentPrice),
+			PoP:        fmt.Sprintf("%.1f%%", pop*100),
 		})
 	}
 
@@ -131,15 +169,20 @@ func FindTrades(ticker string, currentPrice, targetPrice float64, targetDateStr 
 	}
 
 	if bestOption != nil {
+		breakEven := bestOption.Strike + bestOption.Ask
+		pop := calculator.CalculatePoP(breakEven, currentPrice, float64(daysOut)/365.0, bestOption.Vol)
+
 		trades = append(trades, Trade{
 			RiskProfile: Degen,
 			Description: "Naked Call. Highest theoretical ROI if target hit.",
 			Legs: []TradeLeg{
 				{Action: "Buy", Option: *bestOption},
 			},
-			NetDebit:  bestOption.Ask,
-			MaxProfit: "Unlimited",
-			ROI:       fmt.Sprintf("%.0f%%", maxROI*100),
+			NetDebit:   bestOption.Ask,
+			MaxProfit:  "Unlimited",
+			ROI:        fmt.Sprintf("%.0f%%", maxROI*100),
+			DegenScore: CalculateDegenScore(*bestOption, currentPrice),
+			PoP:        fmt.Sprintf("%.1f%%", pop*100),
 		})
 	}
 

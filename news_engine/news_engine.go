@@ -40,7 +40,7 @@ func AnalyzeSentiment(text string) (Signal, error) {
 	prompt := "You are a hedge fund algo. Analyze this text for market sentiment. Return valid JSON (RFC 8259) with double quotes for keys and strings. Do not use single quotes. Example: { \"ticker\": \"TSLA\", \"sentiment\": \"BULLISH\", \"confidence\": 0.9, \"reasoning\": \"...\" }."
 
 	requestBody, _ := json.Marshal(map[string]interface{}{
-		"model": "openai/gpt-3.5-turbo",
+		"model": "x-ai/grok-4.1-fast:free",
 		"messages": []map[string]string{
 			{"role": "system", "content": prompt},
 			{"role": "user", "content": text},

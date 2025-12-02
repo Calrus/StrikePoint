@@ -24,7 +24,8 @@ const Calculator = () => {
                     ticker: formData.ticker,
                     // currentPrice: parseFloat(formData.currentPrice), // Fetched by backend
                     targetPrice: parseFloat(formData.targetPrice),
-                    date: formData.date
+                    date: formData.date,
+                    sentiment: formData.sentiment
                 }),
             });
 
@@ -43,14 +44,7 @@ const Calculator = () => {
 
     return (
         <div className="flex flex-col items-center w-full max-w-[1600px] mx-auto px-4">
-            <div className="text-center mb-12">
-                <h2 className="text-4xl font-bold mb-4 font-mono tracking-tight">
-                    MARKET <span className="text-primary">PREDICTION</span> ENGINE
-                </h2>
-                <p className="text-gray-400 max-w-xl mx-auto">
-                    Enter your market thesis below. StrikeLogic will analyze thousands of option combinations to find the optimal risk-adjusted trades.
-                </p>
-            </div>
+
 
             <PredictionForm onCalculate={handleCalculate} loading={loading} />
 

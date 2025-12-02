@@ -26,6 +26,7 @@ type OptionContract struct {
 	Delta      float64    `json:"delta"`
 	Gamma      float64    `json:"gamma"`
 	Theta      float64    `json:"theta"`
+	Vega       float64    `json:"vega"`
 	Underlying string     `json:"underlying"`
 }
 
@@ -39,28 +40,95 @@ func pdf(x float64) float64 {
 	return (1 / math.Sqrt(2*math.Pi)) * math.Exp(-0.5*x*x)
 }
 
-// BlackScholes calculates the Call Price and Greeks
+// CalculateOptionPrice calculates Price and Greeks for Call or Put
 // S: Current Price, K: Strike Price, T: Time to Expiry (years), r: Risk-Free Rate, sigma: Implied Volatility
-func BlackScholes(S, K, T, r, sigma float64) (price, delta, gamma, theta float64) {
+func CalculateOptionPrice(optType OptionType, S, K, T, r, sigma float64) (price, delta, gamma, theta, vega float64) {
 	d1 := (math.Log(S/K) + (r+0.5*sigma*sigma)*T) / (sigma * math.Sqrt(T))
 	d2 := d1 - sigma*math.Sqrt(T)
 
-	// Call Price
-	price = S*cdf(d1) - K*math.Exp(-r*T)*cdf(d2)
-
-	// Delta
-	delta = cdf(d1)
-
-	// Gamma
+	// Common Greeks
 	gamma = pdf(d1) / (S * sigma * math.Sqrt(T))
+	vega = S * pdf(d1) * math.Sqrt(T) / 100 // Divide by 100 for percentage change
 
-	// Theta (Annual)
-	// Note: Usually theta is negative for long calls
-	term1 := -(S * pdf(d1) * sigma) / (2 * math.Sqrt(T))
-	term2 := r * K * math.Exp(-r*T) * cdf(d2)
-	theta = term1 - term2
+	if optType == Call {
+		price = S*cdf(d1) - K*math.Exp(-r*T)*cdf(d2)
+		delta = cdf(d1)
 
-	return price, delta, gamma, theta
+		term1 := -(S * pdf(d1) * sigma) / (2 * math.Sqrt(T))
+		term2 := r * K * math.Exp(-r*T) * cdf(d2)
+		theta = (term1 - term2) / 365 // Daily Theta
+	} else {
+		price = K*math.Exp(-r*T)*cdf(-d2) - S*cdf(-d1)
+		delta = cdf(d1) - 1
+
+		term1 := -(S * pdf(d1) * sigma) / (2 * math.Sqrt(T))
+		term2 := r * K * math.Exp(-r*T) * cdf(-d2)
+		theta = (term1 + term2) / 365 // Daily Theta
+	}
+
+	return price, delta, gamma, theta, vega
+}
+
+// CalculateIV solves for Implied Volatility using Newton-Raphson
+func CalculateIV(marketPrice float64, optType OptionType, S, K, T, r float64) float64 {
+	sigma := 0.5 // Initial guess
+	tolerance := 1e-5
+	maxIterations := 100
+
+	for i := 0; i < maxIterations; i++ {
+		price, _, _, _, vega := CalculateOptionPrice(optType, S, K, T, r, sigma)
+		diff := marketPrice - price
+
+		if math.Abs(diff) < tolerance {
+			return sigma
+		}
+
+		// Avoid division by zero
+		if vega == 0 {
+			break
+		}
+
+		// Vega in CalculateOptionPrice is scaled by 100, so we need to adjust or use raw vega
+		// Let's recalculate raw vega here for precision in NR
+		d1 := (math.Log(S/K) + (r+0.5*sigma*sigma)*T) / (sigma * math.Sqrt(T))
+		rawVega := S * pdf(d1) * math.Sqrt(T)
+
+		sigma = sigma + diff/rawVega
+	}
+
+	return sigma
+}
+
+// CalculatePoP calculates Probability of Profit
+// Formula: PoP = 1 - NormCDF( (log(BreakEven / StockPrice) - (Volatility^2 / 2) * Time) / (Volatility * sqrt(Time)) )
+func CalculatePoP(breakEven, S, T, sigma float64) float64 {
+	if T <= 0 || sigma <= 0 {
+		return 0
+	}
+	d := (math.Log(breakEven/S) - (0.5*sigma*sigma)*T) / (sigma * math.Sqrt(T))
+	return 1 - cdf(d)
+}
+
+// CalculateReturnOnRiskDebit calculates RoR for Debit Spreads
+func CalculateReturnOnRiskDebit(maxProfit, netDebit float64) float64 {
+	if netDebit <= 0 {
+		return 0 // Avoid division by zero or negative debit weirdness
+	}
+	return (maxProfit / netDebit) * 100
+}
+
+// CalculateReturnOnRiskCredit calculates RoR for Credit Spreads
+func CalculateReturnOnRiskCredit(netCredit, maxRisk float64) float64 {
+	if maxRisk <= 0 {
+		return 0
+	}
+	return (netCredit / maxRisk) * 100
+}
+
+// BlackScholes wrapper for backward compatibility if needed, defaulting to Call
+func BlackScholes(S, K, T, r, sigma float64) (price, delta, gamma, theta float64) {
+	p, d, g, t, _ := CalculateOptionPrice(Call, S, K, T, r, sigma)
+	return p, d, g, t
 }
 
 // GetChain generates a mock option chain for a given ticker (default ~30 days)
@@ -70,10 +138,6 @@ func GetChain(ticker string) []OptionContract {
 
 // GetChainForExpiry generates a mock option chain for a given ticker and days to expiry
 func GetChainForExpiry(ticker string, daysOut int) []OptionContract {
-	// Seed random for variability (in a real app, do this once in main)
-	// But for this function to be self-contained mock, we'll just use global rand which is seeded by 1 by default or we can seed here.
-	// Let's just use default rand for reproducibility or simple mock.
-
 	currentPrice := 100.0 // Base price for mock
 	if ticker == "GOOG" {
 		currentPrice = 2800.0
@@ -81,6 +145,8 @@ func GetChainForExpiry(ticker string, daysOut int) []OptionContract {
 		currentPrice = 3400.0
 	} else if ticker == "TSLA" {
 		currentPrice = 900.0
+	} else if ticker == "SPY" {
+		currentPrice = 450.0
 	}
 
 	r := 0.05                     // 5% risk free rate
@@ -100,30 +166,57 @@ func GetChainForExpiry(ticker string, daysOut int) []OptionContract {
 		// Randomize IV slightly between 20% and 40%
 		iv := 0.20 + rand.Float64()*0.20
 
-		price, delta, gamma, theta := BlackScholes(currentPrice, k, T, r, iv)
+		// Call
+		cPrice, cDelta, cGamma, cTheta, cVega := CalculateOptionPrice(Call, currentPrice, k, T, r, iv)
 
 		// Spread logic
-		spread := price * 0.02 // 2% spread
-		bid := price - spread/2
-		ask := price + spread/2
-		if bid < 0 {
-			bid = 0
+		spread := cPrice * 0.02
+		cBid := cPrice - spread/2
+		cAsk := cPrice + spread/2
+		if cBid < 0 {
+			cBid = 0
 		}
 
-		contract := OptionContract{
+		callContract := OptionContract{
 			Strike:     math.Round(k*100) / 100,
 			Expiry:     time.Now().AddDate(0, 0, daysOut).Format("2006-01-02"),
 			Type:       Call,
-			Bid:        math.Round(bid*100) / 100,
-			Ask:        math.Round(ask*100) / 100,
-			Last:       math.Round(price*100) / 100,
+			Bid:        math.Round(cBid*100) / 100,
+			Ask:        math.Round(cAsk*100) / 100,
+			Last:       math.Round(cPrice*100) / 100,
 			Vol:        math.Round(iv*100) / 100,
-			Delta:      math.Round(delta*1000) / 1000,
-			Gamma:      math.Round(gamma*1000) / 1000,
-			Theta:      math.Round(theta*1000) / 1000,
+			Delta:      math.Round(cDelta*1000) / 1000,
+			Gamma:      math.Round(cGamma*1000) / 1000,
+			Theta:      math.Round(cTheta*1000) / 1000,
+			Vega:       math.Round(cVega*1000) / 1000,
 			Underlying: ticker,
 		}
-		chain = append(chain, contract)
+		chain = append(chain, callContract)
+
+		// Put
+		pPrice, pDelta, pGamma, pTheta, pVega := CalculateOptionPrice(Put, currentPrice, k, T, r, iv)
+
+		pBid := pPrice - spread/2
+		pAsk := pPrice + spread/2
+		if pBid < 0 {
+			pBid = 0
+		}
+
+		putContract := OptionContract{
+			Strike:     math.Round(k*100) / 100,
+			Expiry:     time.Now().AddDate(0, 0, daysOut).Format("2006-01-02"),
+			Type:       Put,
+			Bid:        math.Round(pBid*100) / 100,
+			Ask:        math.Round(pAsk*100) / 100,
+			Last:       math.Round(pPrice*100) / 100,
+			Vol:        math.Round(iv*100) / 100,
+			Delta:      math.Round(pDelta*1000) / 1000,
+			Gamma:      math.Round(pGamma*1000) / 1000,
+			Theta:      math.Round(pTheta*1000) / 1000,
+			Vega:       math.Round(pVega*1000) / 1000,
+			Underlying: ticker,
+		}
+		chain = append(chain, putContract)
 	}
 
 	return chain

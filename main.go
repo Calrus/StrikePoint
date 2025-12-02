@@ -10,7 +10,7 @@ import (
 	"strikelogic/news_engine"
 	"strikelogic/newsfeed"
 	"strikelogic/storage"
-	"strikelogic/strategist"
+	"strikelogic/strategies"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -73,6 +73,7 @@ func main() {
 			CurrentPrice float64 `json:"currentPrice"`
 			TargetPrice  float64 `json:"targetPrice"`
 			Date         string  `json:"date"`
+			Sentiment    string  `json:"sentiment"`
 		}
 
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -80,7 +81,16 @@ func main() {
 			return
 		}
 
-		trades, err := strategist.FindTrades(req.Ticker, req.CurrentPrice, req.TargetPrice, req.Date)
+		// Fetch Option Chain
+		chain, err := calculator.GetOptionsChain(req.Ticker)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to fetch options chain: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// Generate Strategies
+		// Pass sentiment from request
+		trades, err := strategies.GenerateAllStrategies(chain, req.Date, req.Sentiment, req.TargetPrice)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

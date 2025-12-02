@@ -1,54 +1,59 @@
-import React, { useState, useEffect } from 'react';
-import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, ReferenceLine, Tooltip, ReferenceArea, CartesianGrid } from 'recharts';
-import { TrendingUp, Shield, Zap, ArrowRight, DollarSign, Percent } from 'lucide-react';
+import React, { useMemo } from 'react';
+import { AreaChart, Area, ReferenceLine, ResponsiveContainer, YAxis, XAxis, CartesianGrid } from 'recharts';
+import { ArrowRight, DollarSign, AlertTriangle } from 'lucide-react';
+
+// --- Helper Functions ---
 
 const generatePayoffData = (trade, currentPrice) => {
     const data = [];
     const legs = trade.legs;
     if (!legs || legs.length === 0) return data;
 
-    // Domain: +/- 20% of current price
-    // If currentPrice is not provided, fallback to strike-based estimation
+    // Domain: +/- 15% of current price for mini chart
     let centerPrice = currentPrice;
-    if (!centerPrice) {
+    if (!centerPrice && legs[0].option) {
         centerPrice = legs[0].option.strike;
     }
+    if (!centerPrice && legs[0].stockPrice) {
+        centerPrice = legs[0].stockPrice;
+    }
+    if (!centerPrice) centerPrice = 100;
 
-    const minPrice = centerPrice * 0.8;
-    const maxPrice = centerPrice * 1.2;
+    const minPrice = centerPrice * 0.85;
+    const maxPrice = centerPrice * 1.15;
 
-    const steps = 50;
+    const steps = 40; // Fewer steps for mini chart
     const stepSize = (maxPrice - minPrice) / steps;
 
     for (let i = 0; i <= steps; i++) {
         const price = minPrice + (i * stepSize);
         let profit = 0;
 
-        // Calculate profit based on strategy type (simplified)
-        // Ideally we should use a more robust payoff calculator that handles all leg types
-        // For now, we'll stick to the basic logic but apply it to all points
+        profit -= trade.netDebit;
 
-        let grossValue = 0;
         legs.forEach(leg => {
-            const strike = leg.option.strike;
-            const type = leg.option.type; // 'Call' or 'Put'
-            const action = leg.action; // 'Buy' or 'Sell'
-
-            let legValue = 0;
-            if (type.toLowerCase() === 'call') {
-                legValue = Math.max(price - strike, 0);
+            let valueAtExpiry = 0;
+            if (leg.isStock) {
+                valueAtExpiry = (price - leg.stockPrice) * leg.quantity;
             } else {
-                legValue = Math.max(strike - price, 0);
-            }
+                const strike = leg.option.strike;
+                const type = leg.option.type; // 'Call' or 'Put'
 
-            if (action === 'Buy') {
-                grossValue += legValue;
-            } else {
-                grossValue -= legValue;
+                let intrinsic = 0;
+                if (type === 'Call') {
+                    intrinsic = Math.max(price - strike, 0);
+                } else {
+                    intrinsic = Math.max(strike - price, 0);
+                }
+
+                const legValue = intrinsic * 100 * leg.quantity;
+                if (leg.action === 'Buy') {
+                    profit += legValue;
+                } else {
+                    profit -= legValue;
+                }
             }
         });
-
-        profit = grossValue - trade.netDebit;
 
         data.push({
             price: parseFloat(price.toFixed(2)),
@@ -59,250 +64,151 @@ const generatePayoffData = (trade, currentPrice) => {
     return data;
 };
 
-const MiniCard = ({ trade, type, isActive, onClick }) => {
-    const isDegen = type === 'degen';
-    const isLow = type === 'low';
+// --- Components ---
 
-    let borderColor = 'border-gray-800';
-    let activeClass = '';
-    let icon = <Shield size={16} className="text-blue-400" />;
-    let badgeText = 'BALANCED';
-    let badgeColor = 'bg-blue-500/10 text-blue-400';
+const StrategyCard = ({ trade, currentPrice }) => {
+    const payoffData = useMemo(() => generatePayoffData(trade, currentPrice), [trade, currentPrice]);
 
-    if (isLow) {
-        icon = <TrendingUp size={16} className="text-success" />;
-        badgeText = 'INCOME';
-        badgeColor = 'bg-success/10 text-success';
-    } else if (isDegen) {
-        icon = <Zap size={16} className="text-primary" />;
-        badgeText = 'AGGRESSIVE';
-        badgeColor = 'bg-primary/10 text-primary';
-    }
+    // Calculate ROI (approximate for display)
+    // If Debit > 0: ROI = MaxProfit / Debit. If MaxProfit is infinite, show "Unlimited"
+    // If Credit (Debit < 0): ROI = Credit / Margin (Margin not fully calc'd yet, use MaxRisk)
+    let roiDisplay = "N/A";
+    let roiColor = "text-gray-400";
 
-    if (isActive) {
-        borderColor = isDegen ? 'border-primary' : isLow ? 'border-success' : 'border-blue-500';
-        activeClass = 'bg-surface/80 shadow-lg scale-[1.02]';
+    if (trade.netDebit > 0) {
+        // Debit Trade
+        if (trade.maxProfit > 1000000) { // Arbitrary large number for "Unlimited"
+            roiDisplay = "∞%";
+            roiColor = "text-green-400";
+        } else {
+            const roi = (trade.maxProfit / trade.netDebit) * 100;
+            roiDisplay = `${roi.toFixed(0)}%`;
+            roiColor = roi > 0 ? "text-green-400" : "text-red-400";
+        }
     } else {
-        activeClass = 'bg-surface/30 hover:bg-surface/50 opacity-70 hover:opacity-100';
-    }
-
-    return (
-        <div
-            onClick={onClick}
-            className={`
-                cursor-pointer p-4 rounded-xl border ${borderColor} ${activeClass}
-                transition-all duration-200 mb-3 group
-            `}
-        >
-            <div className="flex justify-between items-start mb-2">
-                <div className="flex items-center gap-2">
-                    {icon}
-                    <span className="font-bold font-mono text-sm text-white">
-                        {trade.riskProfile.split('(')[1].replace(')', '')}
-                    </span>
-                </div>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full font-mono ${badgeColor}`}>
-                    {badgeText}
-                </span>
-            </div>
-
-            <div className="flex justify-between items-end">
-                <div>
-                    <span className="text-xs text-gray-500 font-mono block">MAX PROFIT</span>
-                    <span className="text-sm font-bold text-gray-300 font-mono">{trade.maxProfit}</span>
-                </div>
-                <div className="text-right">
-                    <span className="text-xs text-gray-500 font-mono block">ROI</span>
-                    <span className={`text-sm font-bold font-mono ${isDegen ? 'text-primary' : 'text-white'}`}>
-                        {trade.roi}
-                    </span>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-const DetailView = ({ trade, type, currentPrice }) => {
-    const payoffData = generatePayoffData(trade, currentPrice);
-    const isDegen = type === 'degen';
-    const isLow = type === 'low';
-
-    // Calculate Break-Even (approximate: find where profit crosses 0)
-    // Simple scan
-    let breakEvenPrice = null;
-    for (let i = 0; i < payoffData.length - 1; i++) {
-        if ((payoffData[i].profit < 0 && payoffData[i + 1].profit >= 0) ||
-            (payoffData[i].profit >= 0 && payoffData[i + 1].profit < 0)) {
-            breakEvenPrice = payoffData[i].price;
-            break;
+        // Credit Trade
+        // ROI = Credit / Max Risk
+        if (trade.maxRisk > 0) {
+            const credit = Math.abs(trade.netDebit);
+            const roi = (credit / trade.maxRisk) * 100;
+            roiDisplay = `${roi.toFixed(0)}%`;
+            roiColor = "text-green-400";
         }
     }
 
-    // Determine chart min/max for ReferenceArea
-    const profits = payoffData.map(d => d.profit);
-    const maxProfitVal = Math.max(...profits, 100); // Ensure some height
-    const minProfitVal = Math.min(...profits, -100);
+    // Format legs summary
+    const legsSummary = trade.legs.map(leg => {
+        if (leg.isStock) return `${leg.action} Stock`;
+        const type = leg.option.type === 'Call' ? 'C' : 'P';
+        return `${leg.action} ${leg.option.strike}${type}`;
+    }).join(', ');
 
     return (
-        <div className="flex flex-col h-full animate-in fade-in duration-500">
-            {/* Header Stats */}
-            <div className="grid grid-cols-3 gap-4 mb-8">
-                <div className="bg-surface/30 p-4 rounded-xl border border-gray-800">
-                    <div className="flex items-center gap-2 mb-1 text-gray-400">
-                        <DollarSign size={16} />
-                        <span className="text-xs font-mono">NET DEBIT</span>
-                    </div>
-                    <span className="text-2xl font-bold font-mono text-white">${trade.netDebit.toFixed(2)}</span>
-                </div>
-                <div className="bg-surface/30 p-4 rounded-xl border border-gray-800">
-                    <div className="flex items-center gap-2 mb-1 text-gray-400">
-                        <TrendingUp size={16} />
-                        <span className="text-xs font-mono">MAX PROFIT</span>
-                    </div>
-                    <span className="text-2xl font-bold font-mono text-white">{trade.maxProfit}</span>
-                </div>
-                <div className="bg-surface/30 p-4 rounded-xl border border-gray-800">
-                    <div className="flex items-center gap-2 mb-1 text-gray-400">
-                        <Percent size={16} />
-                        <span className="text-xs font-mono">ROI POTENTIAL</span>
-                    </div>
-                    <span className={`text-2xl font-bold font-mono ${isDegen ? 'text-primary' : 'text-success'}`}>
-                        {trade.roi}
-                    </span>
+        <div className="bg-surface/30 border border-gray-800 rounded-xl overflow-hidden hover:border-primary/50 transition-all duration-300 flex flex-col h-[320px] group">
+            {/* Header */}
+            <div className="p-4 border-b border-gray-800/50 bg-black/20 text-center relative">
+                <h3 className="font-mono font-bold text-white text-sm truncate">{trade.name}</h3>
+                <div className="text-[10px] font-mono text-gray-400 mt-1 truncate">{legsSummary}</div>
+                <div className="absolute top-0 right-0 p-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <ArrowRight size={14} className="text-gray-500" />
                 </div>
             </div>
 
-            {/* Main Chart */}
-            <div className="flex-grow bg-surface/20 rounded-xl p-6 border border-gray-800 mb-8 relative overflow-hidden">
-                <div className="absolute top-4 left-6 z-10">
-                    <h3 className="text-lg font-bold text-white font-mono flex items-center gap-2">
-                        PAYOFF DIAGRAM <span className="text-xs text-gray-500 bg-black/50 px-2 py-1 rounded">AT EXPIRY</span>
-                    </h3>
+            {/* Metrics Row */}
+            <div className="grid grid-cols-2 gap-4 p-4 border-b border-gray-800/30">
+                <div className="flex flex-col items-center">
+                    <span className="text-[10px] font-mono text-gray-500 uppercase">Max Profit</span>
+                    <span className="text-lg font-bold font-mono text-green-400">
+                        {trade.maxProfit > 1000000 ? "Unlimited" : `$${trade.maxProfit.toFixed(0)}`}
+                    </span>
                 </div>
-                <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={payoffData} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
-                        <CartesianGrid stroke="#333" strokeDasharray="3 3" vertical={false} />
+                <div className="flex flex-col items-center">
+                    <span className="text-[10px] font-mono text-gray-500 uppercase">Max Risk</span>
+                    <span className="text-lg font-bold font-mono text-gray-400">${trade.maxRisk.toFixed(0)}</span>
+                </div>
+            </div>
 
-                        {/* Profit Zone (Green) */}
-                        <ReferenceArea y1={0} y2={maxProfitVal * 1.5} fill="green" fillOpacity={0.05} />
-                        {/* Loss Zone (Red) */}
-                        <ReferenceArea y1={minProfitVal * 1.5} y2={0} fill="red" fillOpacity={0.05} />
+            {/* Mini Chart */}
+            <div className="flex-grow relative w-full bg-[#050505]">
+                <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={payoffData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                        <defs>
+                            <linearGradient id={`gradient-${trade.name}`} x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
+                                <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                            </linearGradient>
+                            <linearGradient id={`splitColor-${trade.name}`} x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0" stopColor="#10b981" stopOpacity={0.4} />
+                                <stop offset="1" stopColor="#ef4444" stopOpacity={0.4} />
+                            </linearGradient>
+                        </defs>
+
+                        <CartesianGrid stroke="#222" strokeDasharray="3 3" vertical={true} horizontal={true} />
 
                         <XAxis
                             dataKey="price"
-                            stroke="#666"
-                            tick={{ fill: '#666', fontSize: 12, fontFamily: 'monospace' }}
-                            tickFormatter={(val) => `$${val}`}
+                            type="number"
                             domain={['auto', 'auto']}
+                            tick={{ fill: '#666', fontSize: 10, fontFamily: 'monospace' }}
+                            tickFormatter={(val) => `$${val}`}
+                            interval="preserveStartEnd"
+                            minTickGap={20}
+                            tickCount={6}
                         />
                         <YAxis
-                            stroke="#666"
-                            tick={{ fill: '#666', fontSize: 12, fontFamily: 'monospace' }}
+                            tick={{ fill: '#666', fontSize: 10, fontFamily: 'monospace' }}
                             tickFormatter={(val) => `$${val}`}
-                        />
-                        <Tooltip
-                            contentStyle={{ backgroundColor: '#0a0a0a', border: '1px solid #333', borderRadius: '8px' }}
-                            itemStyle={{ color: '#fff', fontFamily: 'monospace' }}
-                            formatter={(value) => [`$${value}`, 'Profit/Loss']}
-                            labelFormatter={(label) => `Price: $${label}`}
+                            width={45}
                         />
 
-                        {/* Zero Line */}
-                        <ReferenceLine y={0} stroke="#6b7280" strokeWidth={1} />
-
-                        {/* Current Price Line */}
+                        <ReferenceLine y={0} stroke="#444" strokeWidth={1} />
                         {currentPrice && (
-                            <ReferenceLine x={currentPrice} stroke="#fff" strokeDasharray="3 3" label={{ value: 'CURRENT', position: 'top', fill: '#fff', fontSize: 10 }} />
+                            <ReferenceLine x={currentPrice} stroke="#666" strokeDasharray="2 2" />
                         )}
 
-                        {/* Break-Even Line */}
-                        {breakEvenPrice && (
-                            <ReferenceLine x={breakEvenPrice} stroke="#fbbf24" strokeDasharray="3 3" label={{ value: 'BREAK-EVEN', position: 'top', fill: '#fbbf24', fontSize: 10 }} />
-                        )}
-
-                        <Line
+                        <Area
                             type="monotone"
                             dataKey="profit"
-                            stroke="#00ffcc"
-                            strokeWidth={3}
-                            dot={false}
-                            style={{ filter: 'drop-shadow(0 0 8px rgba(0, 255, 204, 0.6))' }}
+                            stroke="#10b981" // Default green stroke
+                            fill={`url(#splitColor-${trade.name})`} // Simple vertical gradient for now
+                            strokeWidth={2}
                         />
-                    </LineChart>
+                    </AreaChart>
                 </ResponsiveContainer>
+
+                {/* Cost Overlay */}
+                <div className="absolute bottom-2 right-2 bg-black/60 px-2 py-1 rounded text-[10px] font-mono text-gray-400 border border-gray-800">
+                    {trade.netDebit > 0 ? `Debit: $${trade.netDebit.toFixed(0)}` : `Credit: $${Math.abs(trade.netDebit).toFixed(0)}`}
+                </div>
             </div>
 
-            {/* Legs Detail */}
-            <div className="bg-black/40 rounded-xl p-6 border border-gray-800">
-                <h4 className="text-sm font-mono text-gray-400 mb-4 uppercase tracking-wider">Strategy Composition</h4>
-                <div className="space-y-3">
-                    {trade.legs.map((leg, idx) => (
-                        <div key={idx} className="flex items-center justify-between p-3 bg-surface/30 rounded-lg border border-gray-800/50">
-                            <div className="flex items-center gap-4">
-                                <span className={`font-bold font-mono px-2 py-1 rounded text-xs ${leg.action === 'Buy' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
-                                    {leg.action.toUpperCase()}
-                                </span>
-                                <span className="text-white font-mono text-lg">{leg.option.strike} {leg.option.type.toUpperCase()}</span>
-                            </div>
-                            <div className="flex items-center gap-4 text-gray-400 font-mono text-sm">
-                                <span>EXP: {leg.option.expiry}</span>
-                                <ArrowRight size={14} />
-                            </div>
-                        </div>
-                    ))}
-                </div>
-                <p className="mt-4 text-gray-400 text-sm leading-relaxed border-t border-gray-800 pt-4">
-                    {trade.description}
-                </p>
-            </div>
+            {/* Footer Button */}
+            <button className="w-full py-3 bg-primary/10 hover:bg-primary hover:text-white text-primary font-mono text-xs font-bold uppercase tracking-wider transition-all duration-200 border-t border-gray-800">
+                Open in Builder
+            </button>
         </div>
     );
 };
 
 const TradeShowdown = ({ trades, currentPrice }) => {
-    const [activeIndex, setActiveIndex] = useState(0);
+    // We can still filter if needed, but the request implies showing "all strategies" (filtered by backend sentiment).
+    // The backend already filters by sentiment if provided.
 
     if (!trades || trades.length === 0) return null;
 
-    const getTradeType = (profile) => {
-        if (profile.includes('Low')) return 'low';
-        if (profile.includes('Medium')) return 'medium';
-        if (profile.includes('Degen')) return 'degen';
-        return 'medium';
-    };
-
-    const activeTrade = trades[activeIndex];
-    // Fallback if currentPrice is missing (e.g. direct nav)
-    const price = currentPrice || (activeTrade.legs[0]?.option.strike || 100);
+    // Use the first trade's strike or current price for chart centering if currentPrice is missing
+    const price = currentPrice || (trades[0]?.legs[0]?.option?.strike || 100);
 
     return (
-        <div className="flex flex-col lg:flex-row gap-6 w-full max-w-7xl mx-auto h-[800px] animate-in fade-in slide-in-from-bottom-4 duration-700">
-            {/* Sidebar (Master List) */}
-            <div className="w-full lg:w-[350px] flex-shrink-0 flex flex-col bg-black/20 rounded-2xl border border-gray-800 overflow-hidden">
-                <div className="p-4 border-b border-gray-800 bg-surface/30">
-                    <h3 className="font-mono font-bold text-gray-400 text-xs uppercase tracking-widest">Available Strategies</h3>
-                </div>
-                <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-                    {trades.map((trade, idx) => (
-                        <MiniCard
-                            key={idx}
-                            trade={trade}
-                            type={getTradeType(trade.riskProfile)}
-                            isActive={idx === activeIndex}
-                            onClick={() => setActiveIndex(idx)}
-                        />
-                    ))}
-                </div>
-            </div>
-
-            {/* Canvas (Detail View) */}
-            <div className="flex-1 bg-black/20 rounded-2xl border border-gray-800 p-6 overflow-y-auto custom-scrollbar">
-                <DetailView
-                    key={activeIndex} // Force re-render for animation
-                    trade={activeTrade}
-                    type={getTradeType(activeTrade.riskProfile)}
-                    currentPrice={price}
-                />
+        <div className="w-full max-w-[1600px] mx-auto animate-in fade-in slide-in-from-bottom-4 duration-700 pb-20">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {trades.map((trade, idx) => (
+                    <StrategyCard
+                        key={idx}
+                        trade={trade}
+                        currentPrice={price}
+                    />
+                ))}
             </div>
         </div>
     );
