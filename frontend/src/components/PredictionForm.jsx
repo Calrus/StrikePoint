@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import TimeHorizonSelector from './TimeHorizonSelector';
 
 const PredictionForm = ({ onCalculate, loading }) => {
     const [formData, setFormData] = useState({
@@ -98,13 +99,10 @@ const PredictionForm = ({ onCalculate, loading }) => {
 
                 {/* Target Date */}
                 <div className="bg-surface/50 p-4 rounded-lg border border-gray-800 focus-within:border-primary transition-colors">
-                    <label className="block text-xs text-gray-400 font-mono mb-1">TARGET DATE</label>
-                    <input
-                        type="date"
-                        name="date"
-                        value={formData.date}
-                        onChange={handleChange}
-                        className="w-full bg-transparent text-lg font-bold font-mono focus:outline-none mt-1"
+                    <label className="block text-xs text-gray-400 font-mono mb-2">TIME HORIZON</label>
+                    <TimeHorizonSelector
+                        selectedDate={formData.date}
+                        onChange={(newDate) => setFormData(prev => ({ ...prev, date: newDate }))}
                     />
                 </div>
             </div>

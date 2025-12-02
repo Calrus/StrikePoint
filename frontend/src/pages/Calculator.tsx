@@ -6,11 +6,13 @@ const Calculator = () => {
     const [results, setResults] = useState(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [currentPrice, setCurrentPrice] = useState<number | null>(null);
 
     const handleCalculate = async (formData: any) => {
         setLoading(true);
         setError(null);
         setResults(null);
+        setCurrentPrice(parseFloat(formData.currentPrice));
 
         try {
             const response = await fetch('http://localhost:8081/api/calculate', {
@@ -40,7 +42,7 @@ const Calculator = () => {
     };
 
     return (
-        <div className="flex flex-col items-center">
+        <div className="flex flex-col items-center w-full max-w-[1600px] mx-auto px-4">
             <div className="text-center mb-12">
                 <h2 className="text-4xl font-bold mb-4 font-mono tracking-tight">
                     MARKET <span className="text-primary">PREDICTION</span> ENGINE
@@ -58,7 +60,7 @@ const Calculator = () => {
                 </div>
             )}
 
-            {results && <TradeShowdown trades={results} />}
+            {results && <TradeShowdown trades={results} currentPrice={currentPrice} />}
 
             {!results && !loading && !error && (
                 <div className="text-center py-10 opacity-50">
