@@ -137,15 +137,40 @@ func main() {
 
 		var signals []news_engine.Signal
 		for _, headline := range headlines {
-			signal, err := news_engine.AnalyzeSentiment(headline)
+			sigs, err := news_engine.AnalyzeSentiment(headline)
 			if err != nil {
 				log.Printf("Error analyzing sentiment for '%s': %v", headline, err)
 				continue
 			}
-			signals = append(signals, signal)
+			signals = append(signals, sigs...)
 		}
 
 		json.NewEncoder(w).Encode(signals)
+	})
+
+	http.HandleFunc("/api/news/track", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		ticker := r.URL.Query().Get("ticker")
+		if ticker == "" {
+			http.Error(w, "Ticker required", http.StatusBadRequest)
+			return
+		}
+
+		go func() {
+			log.Printf("Manually fetching news for %s...", ticker)
+			newsfeed.FetchStockNews(ticker)
+		}()
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "fetching", "message": fmt.Sprintf("Started fetching news for %s", ticker)})
 	})
 
 	http.HandleFunc("/api/news", func(w http.ResponseWriter, r *http.Request) {
@@ -153,10 +178,7 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 
 		ticker := r.URL.Query().Get("ticker")
-		if ticker == "" {
-			http.Error(w, "Ticker required", http.StatusBadRequest)
-			return
-		}
+		// if ticker is empty, we fetch all
 
 		limitStr := r.URL.Query().Get("limit")
 		limit := 20

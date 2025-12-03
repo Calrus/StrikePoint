@@ -33,36 +33,43 @@ func FetchStockNews(ticker string) {
 		}
 
 		// Analyze sentiment
-		signal, err := news_engine.AnalyzeSentiment(title)
-		if err != nil {
+		signals, err := news_engine.AnalyzeSentiment(title)
+		if err != nil || len(signals) == 0 {
 			log.Printf("Error analyzing sentiment for '%s': %v", title, err)
-			// Continue without sentiment or skip? Let's save without sentiment for now, or just default.
-			// Actually, let's just log and save with defaults.
-			signal = news_engine.Signal{
+			// Save with default/neutral sentiment for the requested ticker
+			signals = []news_engine.Signal{{
+				Ticker:     ticker,
 				Sentiment:  "NEUTRAL",
 				Confidence: 0,
 				Reasoning:  "Analysis failed",
+			}}
+		}
+
+		for _, signal := range signals {
+			// Use the ticker identified by LLM, or fallback to the search ticker
+			articleTicker := signal.Ticker
+			if articleTicker == "" {
+				articleTicker = ticker
 			}
-		}
 
-		article := storage.Article{
-			Ticker:      ticker,
-			Title:       title,
-			Link:        item.Link,
-			PublishedAt: publishedAt,
-			Sentiment:   signal.Sentiment,
-			Confidence:  signal.Confidence,
-			Reasoning:   signal.Reasoning,
-			// Map sentiment string to score if needed, e.g. BULLISH=1, BEARISH=-1
-			SentimentScore: 0, // Placeholder
-		}
+			article := storage.Article{
+				Ticker:         articleTicker,
+				Title:          title,
+				Link:           item.Link,
+				PublishedAt:    publishedAt,
+				Sentiment:      signal.Sentiment,
+				Confidence:     signal.Confidence,
+				Reasoning:      signal.Reasoning,
+				SentimentScore: 0,
+			}
 
-		if article.Sentiment == "BULLISH" {
-			article.SentimentScore = article.Confidence
-		} else if article.Sentiment == "BEARISH" {
-			article.SentimentScore = -article.Confidence
-		}
+			if article.Sentiment == "BULLISH" {
+				article.SentimentScore = article.Confidence
+			} else if article.Sentiment == "BEARISH" {
+				article.SentimentScore = -article.Confidence
+			}
 
-		storage.SaveArticle(article)
+			storage.SaveArticle(article)
+		}
 	}
 }

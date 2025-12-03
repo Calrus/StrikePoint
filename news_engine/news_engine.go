@@ -31,13 +31,13 @@ func FetchHeadlines() ([]string, error) {
 	return headlines, nil
 }
 
-func AnalyzeSentiment(text string) (Signal, error) {
+func AnalyzeSentiment(text string) ([]Signal, error) {
 	apiKey := os.Getenv("OPENROUTER_API_KEY")
 	if apiKey == "" {
-		return Signal{}, fmt.Errorf("OPENROUTER_API_KEY not set")
+		return nil, fmt.Errorf("OPENROUTER_API_KEY not set")
 	}
 
-	prompt := "You are a hedge fund algo. Analyze this text for market sentiment. Return valid JSON (RFC 8259) with double quotes for keys and strings. Do not use single quotes. Example: { \"ticker\": \"TSLA\", \"sentiment\": \"BULLISH\", \"confidence\": 0.9, \"reasoning\": \"...\" }."
+	prompt := "You are a hedge fund algo. Analyze this text for market sentiment. Identify all relevant tickers. Return valid JSON (RFC 8259) as an array of objects. Example: [{ \"ticker\": \"TSLA\", \"sentiment\": \"BULLISH\", \"confidence\": 0.9, \"reasoning\": \"...\" }]. If only one ticker, return an array with one object."
 
 	requestBody, _ := json.Marshal(map[string]interface{}{
 		"model": "x-ai/grok-4.1-fast:free",
@@ -49,7 +49,7 @@ func AnalyzeSentiment(text string) (Signal, error) {
 
 	req, err := http.NewRequest("POST", "https://openrouter.ai/api/v1/chat/completions", bytes.NewBuffer(requestBody))
 	if err != nil {
-		return Signal{}, err
+		return nil, err
 	}
 
 	req.Header.Set("Authorization", "Bearer "+apiKey)
@@ -60,13 +60,13 @@ func AnalyzeSentiment(text string) (Signal, error) {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return Signal{}, err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return Signal{}, fmt.Errorf("API error: %s", string(body))
+		return nil, fmt.Errorf("API error: %s", string(body))
 	}
 
 	var result struct {
@@ -78,11 +78,11 @@ func AnalyzeSentiment(text string) (Signal, error) {
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return Signal{}, err
+		return nil, err
 	}
 
 	if len(result.Choices) == 0 {
-		return Signal{}, fmt.Errorf("no response from LLM")
+		return nil, fmt.Errorf("no response from LLM")
 	}
 
 	content := result.Choices[0].Message.Content
@@ -92,13 +92,20 @@ func AnalyzeSentiment(text string) (Signal, error) {
 	content = strings.TrimSuffix(content, "```")
 	content = strings.TrimSpace(content)
 
-	var signal Signal
-	if err := json.Unmarshal([]byte(content), &signal); err != nil {
-		// Attempt to handle cases where the LLM might return extra text
-		// This is a simple fallback, might need more robust parsing
-		return Signal{}, fmt.Errorf("failed to parse JSON: %v, content: %s", err, content)
+	var signals []Signal
+	// Try unmarshalling as array first
+	if err := json.Unmarshal([]byte(content), &signals); err != nil {
+		// If that fails, try as single object
+		var singleSignal Signal
+		if err2 := json.Unmarshal([]byte(content), &singleSignal); err2 != nil {
+			return nil, fmt.Errorf("failed to parse JSON: %v, content: %s", err, content)
+		}
+		signals = []Signal{singleSignal}
 	}
-	signal.Headline = text
 
-	return signal, nil
+	for i := range signals {
+		signals[i].Headline = text
+	}
+
+	return signals, nil
 }
