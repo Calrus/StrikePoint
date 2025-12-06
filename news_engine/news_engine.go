@@ -40,7 +40,7 @@ func AnalyzeSentiment(text string) ([]Signal, error) {
 	prompt := "You are a hedge fund algo. Analyze this text for market sentiment. Identify all relevant tickers. Return valid JSON (RFC 8259) as an array of objects. Example: [{ \"ticker\": \"TSLA\", \"sentiment\": \"BULLISH\", \"confidence\": 0.9, \"reasoning\": \"...\" }]. If only one ticker, return an array with one object."
 
 	requestBody, _ := json.Marshal(map[string]interface{}{
-		"model": "x-ai/grok-4.1-fast:free",
+		"model": "openai/gpt-oss-20b:free",
 		"messages": []map[string]string{
 			{"role": "system", "content": prompt},
 			{"role": "user", "content": text},

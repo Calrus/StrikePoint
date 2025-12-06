@@ -1,16 +1,47 @@
 package calculator
 
 import (
+	"encoding/json"
+	"fmt"
 	"log"
 	"math"
+	"net/http"
 	"time"
 
-	"github.com/piquette/finance-go"
-	"github.com/piquette/finance-go/options"
 	"github.com/piquette/finance-go/quote"
 )
 
-// GetQuote fetches the current price for a ticker
+// Yahoo Options Response Structs
+type YahooOptionsResponse struct {
+	OptionChain struct {
+		Result []struct {
+			UnderlyingSymbol string    `json:"underlyingSymbol"`
+			ExpirationDates  []int64   `json:"expirationDates"`
+			Strikes          []float64 `json:"strikes"`
+			Quote            struct {
+				RegularMarketPrice float64 `json:"regularMarketPrice"`
+			} `json:"quote"`
+			Options []struct {
+				ExpirationDate int64                 `json:"expirationDate"`
+				Calls          []YahooOptionContract `json:"calls"`
+				Puts           []YahooOptionContract `json:"puts"`
+			} `json:"options"`
+		} `json:"result"`
+		Error interface{} `json:"error"`
+	} `json:"optionChain"`
+}
+
+type YahooOptionContract struct {
+	Strike            float64 `json:"strike"`
+	Currency          string  `json:"currency"`
+	LastPrice         float64 `json:"lastPrice"`
+	Bid               float64 `json:"bid"`
+	Ask               float64 `json:"ask"`
+	Expiration        int64   `json:"expiration"`
+	ImpliedVolatility float64 `json:"impliedVolatility"`
+	InTheMoney        bool    `json:"inTheMoney"`
+}
+
 // GetQuote fetches the current price for a ticker
 func GetQuote(ticker string) (float64, error) {
 	q, err := quote.Get(ticker)
@@ -37,57 +68,153 @@ func GetQuote(ticker string) (float64, error) {
 	return q.RegularMarketPrice, nil
 }
 
-// GetOptionsChain fetches the full option chain for a ticker.
-// Falls back to mock data if error occurs.
-func GetOptionsChain(ticker string) ([]OptionContract, error) {
-	// 1. Fetch underlying price
-	q, err := quote.Get(ticker)
-	if err != nil || q == nil {
-		log.Printf("Error fetching quote for %s: %v. Using mock data.", ticker, err)
-		return GetMockChain(ticker), nil
-	}
-	currentPrice := q.RegularMarketPrice
-
-	// 2. Fetch options
-	iter := options.GetStraddle(ticker)
-	if iter.Err() != nil {
-		log.Printf("Error fetching options for %s: %v. Using mock data.", ticker, iter.Err())
-		return GetMockChain(ticker), nil
+// GetOptionsChain fetches the option chain for a ticker, targeting a specific date if provided.
+func GetOptionsChain(ticker string, targetDateStr string) ([]OptionContract, error) {
+	// Parse target date
+	var targetDate time.Time
+	if targetDateStr != "" {
+		t, err := time.Parse("2006-01-02", targetDateStr)
+		if err == nil {
+			targetDate = t
+		}
 	}
 
+	// 1. Step 1: Get Meta-Data First (List of Available Expirations)
+	// Fetch "Summary" metadata from Yahoo Options endpoint (no date param gets nearest, plus list of all dates)
+	metaChain, err := fetchYahooOptions(ticker, 0)
+	if err != nil {
+		log.Printf("Error fetching metadata: %v. Falling back to mock.", err)
+		return GetMockChain(ticker), nil
+	}
+
+	// Safety check
+	if len(metaChain.OptionChain.Result) == 0 {
+		return GetMockChain(ticker), nil
+	}
+
+	result := metaChain.OptionChain.Result[0]
+	availableExpirations := result.ExpirationDates
+
+	// 2. Step 2: Date Matcher (Pre-Fetch)
+	var selectedTimestamp int64
+
+	if !targetDate.IsZero() {
+		minDiff := math.MaxFloat64
+		for _, ts := range availableExpirations {
+			expiryTime := time.Unix(ts, 0)
+			// Compare dates (truncate time)
+			diff := math.Abs(expiryTime.Sub(targetDate).Hours())
+			if diff < minDiff {
+				minDiff = diff
+				selectedTimestamp = ts
+			}
+		}
+	} else {
+		// Default to first available if no target (or just use the one we fetched)
+		if len(availableExpirations) > 0 {
+			selectedTimestamp = availableExpirations[0]
+		}
+	}
+
+	// 3. Step 3: Targeted Fetch
+	// If we need a different date than what we got (default is usually index 0, but verified), fetch specific.
+	// Optimization: If selectedTimestamp matches the one in `metaChain.OptionChain.Result[0].Options[0].ExpirationDate` we can skip?
+	// Often Yahoo returns the whole chain for that date.
+
+	var finalChainData YahooOptionsResponse
+
+	// Check if we already have the data
+	alreadyHasData := false
+	if len(result.Options) > 0 {
+		// Yahoo timestamps are seconds.
+		// There might be timezone shifts, but usually exact match.
+		if result.Options[0].ExpirationDate == selectedTimestamp {
+			finalChainData = metaChain
+			alreadyHasData = true
+		}
+	}
+
+	if !alreadyHasData && selectedTimestamp > 0 {
+		finalChainData, err = fetchYahooOptions(ticker, selectedTimestamp)
+		if err != nil {
+			log.Printf("Error fetching targeted chain: %v", err)
+			return nil, err
+		}
+	} else if !alreadyHasData {
+		// Should have data from first fetch
+		finalChainData = metaChain
+	}
+
+	// 4. Verification
+	if len(finalChainData.OptionChain.Result) == 0 || len(finalChainData.OptionChain.Result[0].Options) == 0 {
+		return nil, fmt.Errorf("no options data found")
+	}
+
+	data := finalChainData.OptionChain.Result[0]
+	optData := data.Options[0]
+	fetchedDate := time.Unix(optData.ExpirationDate, 0)
+
+	if !targetDate.IsZero() {
+		diff := math.Abs(fetchedDate.Sub(targetDate).Hours() / 24)
+		log.Printf("Fetched chain for date: %s (Target: %s, Diff: %.2f days)", fetchedDate.Format("2006-01-02"), targetDate.Format("2006-01-02"), diff)
+
+		if diff > 7 {
+			// As requested: "If it's months off, return an error"
+			return nil, fmt.Errorf("fetched date %s is too far from target %s", fetchedDate.Format("2006-01-02"), targetDate.Format("2006-01-02"))
+		}
+	} else {
+		log.Printf("Fetched chain for date: %s (Default)", fetchedDate.Format("2006-01-02"))
+	}
+
+	// Convert to internal format
+	currentPrice := data.Quote.RegularMarketPrice
 	var chain []OptionContract
 
-	for iter.Next() {
-		s := iter.Straddle()
-
-		// Process Call
-		if s.Call != nil {
-			chain = append(chain, convertToContract(s.Call, currentPrice, Call, ticker))
-		}
-		// Process Put
-		if s.Put != nil {
-			chain = append(chain, convertToContract(s.Put, currentPrice, Put, ticker))
-		}
+	for _, call := range optData.Calls {
+		chain = append(chain, convertYahooToContract(call, currentPrice, Call, ticker))
 	}
-
-	if iter.Err() != nil {
-		log.Printf("Error iterating options: %v. Returning partial or mock data.", iter.Err())
-		if len(chain) == 0 {
-			return GetMockChain(ticker), nil
-		}
-	}
-
-	if len(chain) == 0 {
-		return GetMockChain(ticker), nil
+	for _, put := range optData.Puts {
+		chain = append(chain, convertYahooToContract(put, currentPrice, Put, ticker))
 	}
 
 	return chain, nil
 }
 
-func convertToContract(c *finance.Contract, currentPrice float64, optType OptionType, ticker string) OptionContract {
+func fetchYahooOptions(ticker string, date int64) (YahooOptionsResponse, error) {
+	url := fmt.Sprintf("https://query1.finance.yahoo.com/v7/finance/options/%s", ticker)
+	if date > 0 {
+		url = fmt.Sprintf("%s?date=%d", url, date)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return YahooOptionsResponse{}, err
+	}
+
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return YahooOptionsResponse{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return YahooOptionsResponse{}, fmt.Errorf("yahoo api returned status: %s", resp.Status)
+	}
+
+	var res YahooOptionsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return YahooOptionsResponse{}, err
+	}
+
+	return res, nil
+}
+
+func convertYahooToContract(c YahooOptionContract, currentPrice float64, optType OptionType, ticker string) OptionContract {
 	// Convert Expiration (Unix timestamp) to string
-	// Assuming field is named Expiration based on common naming if ExpireDate failed
-	expiryTime := time.Unix(int64(c.Expiration), 0)
+	expiryTime := time.Unix(c.Expiration, 0)
 	expiryStr := expiryTime.Format("2006-01-02")
 
 	// Calculate time to expiry in years
@@ -97,14 +224,12 @@ func convertToContract(c *finance.Contract, currentPrice float64, optType Option
 		T = 0.001
 	}
 
-	// Use ImpliedVolatility from response
 	iv := c.ImpliedVolatility
 	if iv == 0 {
 		iv = 0.5 // Fallback
 	}
 
 	// Calculate Greeks using Black-Scholes
-	// We use 5% risk-free rate as assumption
 	r := 0.05
 	_, delta, gamma, theta := BlackScholes(currentPrice, c.Strike, T, r, iv)
 

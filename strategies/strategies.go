@@ -10,10 +10,12 @@ import (
 
 // GenerateAllStrategies iterates through the option chain and builds standard trades
 func GenerateAllStrategies(chain []calculator.OptionContract, targetDate string, sentiment string, targetPrice float64) ([]Trade, error) {
-	// 1. Filter chain by targetDate (Find closest expiry)
+	// 1. Strict Filter: Ensure we only work with the date closest to targetDate
+	// The incoming chain might contain one or multiple dates depending on how strict the fetch was.
+	// We re-apply the strict "Closest Date" logic to be 100% sure we isolate one single expiry.
 	filteredChain := filterChainByClosestDate(chain, targetDate)
 	if len(filteredChain) == 0 {
-		return nil, fmt.Errorf("no options found for date %s (or closest)", targetDate)
+		return nil, fmt.Errorf("No contracts found for date %s", targetDate)
 	}
 
 	// 2. Get current price (from first option underlying or fetch)
@@ -339,6 +341,13 @@ func GenerateAllStrategies(chain []calculator.OptionContract, targetDate string,
 			}
 
 			trade.CalculateMetrics(currentPrice)
+			trade.ExpirationDate = filteredChain[0].Expiry
+
+			// Calculate Expiry Label
+			expiryDate, _ := time.Parse("2006-01-02", trade.ExpirationDate)
+			daysToExpiry := math.Ceil(expiryDate.Sub(time.Now()).Hours() / 24)
+			trade.ExpiryLabel = fmt.Sprintf("%s (%.0fd)", expiryDate.Format("Jan 02"), daysToExpiry)
+
 			trades = append(trades, *trade)
 		}
 	}
@@ -352,20 +361,20 @@ func filterChainByClosestDate(chain []calculator.OptionContract, targetDateStr s
 	// 1. Parse target date
 	targetDate, err := time.Parse("2006-01-02", targetDateStr)
 	if err != nil {
-		// If parse fails, return empty or try exact string match fallback?
-		// Let's fallback to exact string match just in case
+		// Fallback to exact string match check if parsing fails
 		return filterChainByDate(chain, targetDateStr)
 	}
 
-	// 2. Find unique expiries
+	// 2. Identify all unique expiration dates in the chain
 	expiries := make(map[string]bool)
 	for _, opt := range chain {
 		expiries[opt.Expiry] = true
 	}
 
-	// 3. Find closest expiry
+	// 3. Find the single expiration date mathematically closest to targetDate
 	var bestExpiry string
 	minDiff := math.MaxFloat64
+	found := false
 
 	for expiryStr := range expiries {
 		expiryDate, err := time.Parse("2006-01-02", expiryStr)
@@ -373,18 +382,21 @@ func filterChainByClosestDate(chain []calculator.OptionContract, targetDateStr s
 			continue
 		}
 
+		// Calculate absolute difference in hours
 		diff := math.Abs(expiryDate.Sub(targetDate).Hours())
+
 		if diff < minDiff {
 			minDiff = diff
 			bestExpiry = expiryStr
+			found = true
 		}
 	}
 
-	if bestExpiry == "" {
+	if !found {
 		return nil
 	}
 
-	// 4. Filter by best expiry
+	// 4. Filter the chain to include ONLY contracts matching the best expiration
 	var filtered []calculator.OptionContract
 	for _, opt := range chain {
 		if opt.Expiry == bestExpiry {

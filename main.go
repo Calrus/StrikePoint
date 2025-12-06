@@ -82,7 +82,7 @@ func main() {
 		}
 
 		// Fetch Option Chain
-		chain, err := calculator.GetOptionsChain(req.Ticker)
+		chain, err := calculator.GetOptionsChain(req.Ticker, req.Date)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to fetch options chain: %v", err), http.StatusInternalServerError)
 			return
@@ -195,6 +195,80 @@ func main() {
 		}
 
 		json.NewEncoder(w).Encode(articles)
+	})
+
+	http.HandleFunc("/api/simulate/matrix", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Input struct matching JS Trade object structure somewhat
+		var req struct {
+			Strategies []strategies.Trade `json:"strategies"` // Or single trade? JS sends 'trade' object
+			Strategy   strategies.Trade   `json:"strategy"`
+			Price      float64            `json:"currentPrice"`
+			Vol        float64            `json:"volatility"`
+		}
+
+		// JS Code: fetchMatrixData(trade, currentPrice, vol)
+		// We'll likely send { strategy: trade, currentPrice: ..., volatility: ... }
+
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		// Map strategies.Trade to calculator.StrategyInput
+		var calcInput calculator.StrategyInput
+		calcInput.InitialDebit = req.Strategy.NetDebit
+
+		for _, leg := range req.Strategy.Legs {
+			expiry, _ := time.Parse("2006-01-02", leg.Option.Expiry)
+
+			optType := calculator.Call
+			if leg.Option.Type == "Put" || leg.Option.Type == calculator.Put {
+				optType = calculator.Put
+			}
+
+			l := calculator.LegInput{
+				Strike:   leg.Option.Strike,
+				Type:     optType,
+				Action:   string(leg.Action),
+				Quantity: float64(leg.Quantity),
+				Expiry:   expiry,
+				IV:       leg.Option.Vol,
+			}
+			calcInput.Legs = append(calcInput.Legs, l)
+		}
+
+		// If NetDebit is stored as per-share, total debit is NetDebit * 1 (standard 1 lot context) * 100?
+		// Wait, loop calculated leg value.
+		// calcInput.InitialDebit: logic in calculator uses this to subtract from final value.
+		// If leg quantity is 1, and InitialDebit is say $1.50 (per share).
+		// CombinedOptionValue will be (Price - K) * 100 * Qty. (e.g. $5 * 100 * 1 = $500).
+		// If we subtract $1.50, we get $498.50. This is wrong. It should be subtract $150.
+		// So InitialDebit should be scaled by 100 if it's per-share price.
+		// However, in strategies.go, NetDebit = Ask - Bid (per share).
+		// So we should multiply by 100 here.
+		calcInput.InitialDebit = calcInput.InitialDebit * 100
+
+		matrix, err := calculator.CalculateProfitMatrix(calcInput, req.Price, req.Vol)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		json.NewEncoder(w).Encode(matrix.Grid)
 	})
 
 	fmt.Println("Server starting on :8081...")

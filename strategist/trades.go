@@ -57,7 +57,7 @@ func FindTrades(ticker string, currentPrice, targetPrice float64, targetDateStr 
 	var trades []Trade
 
 	// Fetch full option chain (Real data with fallback)
-	fullChain, err := calculator.GetOptionsChain(ticker)
+	fullChain, err := calculator.GetOptionsChain(ticker, targetDateStr)
 	if err != nil {
 		return nil, err
 	}

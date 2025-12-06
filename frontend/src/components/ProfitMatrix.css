@@ -1,0 +1,208 @@
+.profit-matrix-container {
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background: #09090b;
+    /* Deep dark background matching the theme */
+    padding: 1rem;
+    border-radius: 0.5rem;
+    font-family: 'Inter', sans-serif;
+}
+
+.profit-matrix-grid {
+    display: grid;
+    gap: 1px;
+    background-color: #18181b;
+    /* Lines between cells */
+}
+
+/* Header Cells */
+.matrix-header-date {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    color: #a1a1aa;
+    padding: 0.5rem;
+    font-weight: 500;
+}
+
+.matrix-header-price {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    font-size: 0.75rem;
+    color: #a1a1aa;
+    padding: 0 0.5rem;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+/* Data Cells */
+.matrix-cell {
+    position: relative;
+    width: 100%;
+    height: 48px;
+    /* Fixed height for consistency */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #ffffff;
+    transition: all 0.2s ease;
+    cursor: default;
+}
+
+.matrix-cell:hover {
+    z-index: 10;
+    transform: scale(1.1);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+}
+
+.matrix-cell-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+
+.profit-val {
+    font-family: 'JetBrains Mono', monospace;
+}
+
+/* Break Even Border */
+.matrix-cell.break-even {
+    border: 1px solid #ffffff;
+    box-shadow: inset 0 0 4px rgba(255, 255, 255, 0.5);
+}
+
+/* Blur for low probability */
+.matrix-cell.unlikely {
+    opacity: 0.2 !important;
+    border: none;
+    pointer-events: none;
+}
+
+/* Scenario Control Bar */
+.scenario-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+    padding: 0.75rem 1rem;
+    background: #18181b;
+    border-radius: 0.5rem;
+    border: 1px solid #27272a;
+}
+
+.scenario-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #e4e4e7;
+}
+
+.iv-control {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.iv-label {
+    font-size: 0.8rem;
+    color: #a1a1aa;
+}
+
+.iv-slider {
+    -webkit-appearance: none;
+    width: 200px;
+    height: 4px;
+    background: #3f3f46;
+    border-radius: 2px;
+    outline: none;
+}
+
+.iv-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #22d3ee;
+    /* Cyan */
+    cursor: pointer;
+    box-shadow: 0 0 10px rgba(34, 211, 238, 0.5);
+    transition: transform 0.1s;
+}
+
+.iv-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+}
+
+.iv-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+    color: #22d3ee;
+    min-width: 48px;
+    text-align: right;
+}
+
+/* Glassmorphism Tooltip */
+.matrix-tooltip {
+    position: fixed;
+    z-index: 1000;
+    pointer-events: none;
+    background: rgba(24, 24, 27, 0.85);
+    /* Dark semi-transparent */
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0.75rem;
+    padding: 1rem;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    min-width: 180px;
+    /* Animate in */
+    animation: tooltip-fade 0.15s ease-out;
+    transform: translate(-50%, -100%);
+    margin-top: -10px;
+    /* Offset to sit above cursor */
+    /* Ensure text is above everything */
+    color: #fff;
+}
+
+@keyframes tooltip-fade {
+    from {
+        opacity: 0;
+        transform: translate(-50%, -90%);
+    }
+
+    to {
+        opacity: 1;
+        transform: translate(-50%, -100%);
+    }
+}
+
+.tooltip-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 0.25rem;
+    font-size: 0.85rem;
+}
+
+.tooltip-label {
+    color: #a1a1aa;
+}
+
+.tooltip-value {
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.tooltip-value.profit {
+    color: #34d399;
+}
+
+.tooltip-value.loss {
+    color: #f87171;
+}
+
+/* Light purple */
+/* ... but now Magenta */

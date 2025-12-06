@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { AreaChart, Area, ReferenceLine, ResponsiveContainer, YAxis, XAxis, CartesianGrid } from 'recharts';
-import { ArrowRight, DollarSign, AlertTriangle } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 // --- Helper Functions ---
 
@@ -67,34 +68,8 @@ const generatePayoffData = (trade, currentPrice) => {
 // --- Components ---
 
 const StrategyCard = ({ trade, currentPrice }) => {
+    const navigate = useNavigate();
     const payoffData = useMemo(() => generatePayoffData(trade, currentPrice), [trade, currentPrice]);
-
-    // Calculate ROI (approximate for display)
-    // If Debit > 0: ROI = MaxProfit / Debit. If MaxProfit is infinite, show "Unlimited"
-    // If Credit (Debit < 0): ROI = Credit / Margin (Margin not fully calc'd yet, use MaxRisk)
-    let roiDisplay = "N/A";
-    let roiColor = "text-gray-400";
-
-    if (trade.netDebit > 0) {
-        // Debit Trade
-        if (trade.maxProfit > 1000000) { // Arbitrary large number for "Unlimited"
-            roiDisplay = "∞%";
-            roiColor = "text-green-400";
-        } else {
-            const roi = (trade.maxProfit / trade.netDebit) * 100;
-            roiDisplay = `${roi.toFixed(0)}%`;
-            roiColor = roi > 0 ? "text-green-400" : "text-red-400";
-        }
-    } else {
-        // Credit Trade
-        // ROI = Credit / Max Risk
-        if (trade.maxRisk > 0) {
-            const credit = Math.abs(trade.netDebit);
-            const roi = (credit / trade.maxRisk) * 100;
-            roiDisplay = `${roi.toFixed(0)}%`;
-            roiColor = "text-green-400";
-        }
-    }
 
     // Format legs summary
     const legsSummary = trade.legs.map(leg => {
@@ -183,7 +158,10 @@ const StrategyCard = ({ trade, currentPrice }) => {
             </div>
 
             {/* Footer Button */}
-            <button className="w-full py-3 bg-primary/10 hover:bg-primary hover:text-white text-primary font-mono text-xs font-bold uppercase tracking-wider transition-all duration-200 border-t border-gray-800">
+            <button
+                onClick={() => navigate('/builder', { state: { trade, currentPrice } })}
+                className="w-full py-3 bg-primary/10 hover:bg-primary hover:text-white text-primary font-mono text-xs font-bold uppercase tracking-wider transition-all duration-200 border-t border-gray-800"
+            >
                 Open in Builder
             </button>
         </div>
@@ -191,9 +169,6 @@ const StrategyCard = ({ trade, currentPrice }) => {
 };
 
 const TradeShowdown = ({ trades, currentPrice }) => {
-    // We can still filter if needed, but the request implies showing "all strategies" (filtered by backend sentiment).
-    // The backend already filters by sentiment if provided.
-
     if (!trades || trades.length === 0) return null;
 
     // Use the first trade's strike or current price for chart centering if currentPrice is missing

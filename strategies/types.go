@@ -38,6 +38,9 @@ type Trade struct {
 
 	// Cost
 	NetDebit float64 `json:"netDebit"` // Positive for debit, negative for credit
+
+	ExpirationDate string `json:"expirationDate"`
+	ExpiryLabel    string `json:"expiryLabel"`
 }
 
 // StrategyRecipe contains the rules for constructing a trade
