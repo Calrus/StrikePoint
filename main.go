@@ -240,13 +240,24 @@ func main() {
 				optType = calculator.Put
 			}
 
+			// Determine Entry Price based on Action
+			entryPrice := leg.Option.Ask
+			if leg.Action == "Sell" {
+				entryPrice = leg.Option.Bid
+			}
+			// Fallback if Ask/Bid are 0 (e.g. theoretical or off-hours)
+			if entryPrice == 0 {
+				entryPrice = leg.Option.Last
+			}
+
 			l := calculator.LegInput{
-				Strike:   leg.Option.Strike,
-				Type:     optType,
-				Action:   string(leg.Action),
-				Quantity: float64(leg.Quantity),
-				Expiry:   expiry,
-				IV:       leg.Option.Vol,
+				Strike:     leg.Option.Strike,
+				Type:       optType,
+				Action:     string(leg.Action),
+				Quantity:   float64(leg.Quantity),
+				Expiry:     expiry,
+				IV:         leg.Option.Vol,
+				EntryPrice: entryPrice,
 			}
 			calcInput.Legs = append(calcInput.Legs, l)
 		}

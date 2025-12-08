@@ -144,6 +144,7 @@ const PayoffChart: React.FC<PayoffChartProps> = ({ trade, currentPrice }) => {
                         stroke="#444"
                         tick={{ fill: '#666', fontSize: 11, fontFamily: 'monospace' }}
                         tickFormatter={(val) => `$${val}`}
+                        domain={['auto', 'auto']}
                     />
                     <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'rgba(255,255,255,0.2)', strokeWidth: 1 }} />
                     <ReferenceLine y={0} stroke="#666" strokeWidth={1} />
